@@ -1,0 +1,12 @@
+.env
+.idea/
+.ipynb_checkpoints/
+*.xlsx
+*.gz
+/task_run_1/
+/deprecated/
+/meta_models/
+/runs/
+*.faiss
+*.pkl
+data/
