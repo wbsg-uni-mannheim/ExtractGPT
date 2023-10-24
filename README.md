@@ -4,8 +4,11 @@ This repository contains code and data for experiments on attribute value extrac
 ## Requirements
 
 We evaluate hosted LLMs, such as GPT-3.5 and GPT-4, as well as open-source LLMs based on LLAMA2 which can be run locally. 
-Therefore, an OpenAI access tokens needs to be placed in a `.env` file at the root of the repository.
+
+For the hosted LLMs an OpenAI access tokens needs to be placed in a `.env` file at the root of the repository.
 To obtain this OpenAI access token, users must [sign up](https://platform.openai.com/signup) for an OpenAI account.
+
+To run the open-source LLMs GPU-support is required.
 
 ## Installation
 
@@ -20,7 +23,19 @@ pip install pieutils/
 
 ## Dataset
 
-The datasets subsets of OA-Mine and AE-110k can be found in the folder `data\processed_datasets`.
+For this work we use subsets of two datasets from related work: [OA-Mine](https://github.com/xinyangz/OAMine/) and [AE-110k](https://github.com/cubenlp/ACL19_Scaling_Up_Open_Tagging/).
+Each subset contains product offers from 10 distinct product categories and is split into small train, large train and test set.
+OA-Mine contains 115 attributes and AE-110k contains 101 attributes.
+Further statistics and information about the subsets can be found in the table below and in the paper.
+
+|                     | OA-Mine Small Train       | OA-Mine Large Train      | OA-Mine Test       | AE-110K Small Train     | AE-110K Large Train   | AE-110K Test       |
+|---------------------|----------------|--------------|--------------|---------------|--------------|--------------|
+| Attribute/Value Pairs| 1,467         | 7,360        | 2,451        | 859           | 4,360        | 1,482        |
+| Unique Attribute Values | 1,120      | 4,177        | 1,749        | 302           | 978          | 454          |
+| Product Offers      | 286            | 1,452        | 491          | 311           | 1,568        | 524          |
+
+
+The dataset subsets of OA-Mine and AE-110k can be available in the folder `data\processed_datasets`.
 
 If you want to start from scratch, you can download the datasets and preprocess them yourself.
 The dataset OA-Mine and AE-110k have to be added as raw data to the folder `data\raw`.
@@ -35,9 +50,61 @@ scripts\00_prepare_datasets.sh
 
 ## Prompts
 
+We experiment with zero-shot prompts and prompts that use training data.
+For both scenarios, the two target schema descriptions (a) list and (b) schema are used.
+The following figure shows the prompt structures for the two schema descriptions.
 ![Prompt Designs](resources/zero_shot_prompt_designs.PNG)
 
-We experiment with zero-shot prompts and prompts that use training data.
+### List 
+The list description iterates over the target attribute names for the extraction. The prompt looks as follows:
+    
+```
+System: You are a world-class algorithm for extracting information in structured formats. 
+User: Extract the attribute values from the product title in a JSON format. 
+      Valid attributes are Brand, Color, Material. 
+      If an attribute is not present in the product title, the attribute value is supposed to be 'n/a'.
+User: Dr. Brown's Infant-to-Toddler Toothbrush Set, 1.4 Ounce, Blue
+```
+
+### Schema
+The schema description iterates over the target attribute names, descriptions and example values. The prompt looks as follows:
+
+``` 
+System: You are a world-class algorithm for extracting information in structured formats.
+		{
+			'name': 'Toothbrush',
+			'description': 'Correctly extracted `Toothbrush` with all the required parameters with correct types.',
+			'parameters': {
+				'type': 'object',
+				'properties': {
+					'Brand': {
+						'description': 'The brand of the toothbrush.',
+						'examples': ['Philips Sonicare', 'Sewak Al-Falah', 'GUM', 'Oral-B Pro Health', 'Arm & Hammer', 'Colgate', 'JoJo', 'Wild & Stone', 'Glister', 'Oral-b Vitality'],
+						'type': 'string'
+					},
+					'Color': {
+						'description': 'The color of the toothbrush.',
+						'examples': ['Pink', 'White', 'Spiderman', 'Multi', 'Four Colours', 'Blue and White', 'Sparkle & Shine', 'Lunar Blue', 'Black', 'Soft'],
+						'type': 'string'
+					},
+					'Material': {
+						'description': 'The material used in the toothbrush.',
+						'examples': ['Miswak', 'Bamboo', 'Sewak', 'Plant-Based Bristles', 'Wood', 'Nylon', 'Tynex Bristle', 'Silicone'],
+						'type': 'string'
+					}
+				}
+			}
+		}
+User: Split the product title by whitespace.
+      Extract the valid attribute values from the product title in JSON format.
+      Keep the exact surface form of all attribute values. 
+      All valid attributes are provided in the JSON schema. 
+      Unknown attribute values should be marked as n/a.
+User: Dr. Brown's Infant-to-Toddler Toothbrush Set, 1.4 Ounce, Blue
+```
+
+### Execution
+
 The prompts and the code to execute the prompts are defined in the folder `prompts`.
 You can run the zero-shot prompts and prompts using training with the following scripts:
 

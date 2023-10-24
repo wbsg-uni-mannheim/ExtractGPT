@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-export PYTHONPATH= # <path_to_repo>
+export PYTHONPATH=# <path_to_repo>
 export CUDA_VISIBLE_DEVICES=0,1,2,3
 # Run experiments using training data
 datasets=( "oa-mine" "ae-110k" )
@@ -8,7 +8,7 @@ model="gpt-3.5-turbo-0613" # "gpt-4-0613"
 shots=( 10 )
 percentages=( 0.2 1.0)
 example_selectors=( "SemanticSimilarity" "MaxMarginalRelevance" "Random" )
-no_example_values=3
+no_example_values=5
 schema_type="json_schema"
 
 ## First prompt
@@ -21,8 +21,8 @@ do
       do
         for example_selector in "${example_selectors[@]}"
         do
-          python prompts/2_schema-based_attribute_value_extraction/5_in-context_learning/in_context_learning_chatgpt_with_example_values.py --dataset $dataset --shots $shot --model $model --train_percentage $percentage --example_selector $example_selector --with_containment False --with_validation_error_handling False --schema_type $schema_type --no_example_values $no_example_values
-          python prompts/2_schema-based_attribute_value_extraction/5_in-context_learning/in_context_multiple_attribute_values.py  --dataset $dataset --shots $shot --model $model --train_percentage $percentage --example_selector $example_selector
+          python prompts/5_in-context_learning/in_context_schema_description_with_example_values.py --dataset $dataset --shots $shot --model $model --train_percentage $percentage --example_selector $example_selector --with_containment False --with_validation_error_handling False --schema_type $schema_type --no_example_values $no_example_values > logs/$dataset/$dataset-$model-$shot-$percentage-$example_selector-$no_example_values.log &
+          python prompts/5_in-context_learning/in_context_multiple_attribute_values.py  --dataset $dataset --shots $shot --model $model --train_percentage $percentage --example_selector $example_selector
         done
       done
     done
@@ -41,8 +41,8 @@ done
 #      do
 #        for example_selector in "${example_selectors[@]}"
 #        do
-#          python prompts/2_schema-based_attribute_value_extraction/5_in-context_learning/in_context_schema_description_with_example_values.py --dataset $dataset --shots $shot --model $model --train_percentage $percentage --example_selector $example_selector --with_containment False --with_validation_error_handling False --schema_type $schema_type
-#          python prompts/2_schema-based_attribute_value_extraction/5_in-context_learning/in_context_list.py  --dataset $dataset --shots $shot --model $model --train_percentage $percentage --example_selector $example_selector
+#          python prompts/5_in-context_learning/in_context_schema_description_with_example_values.py --dataset $dataset --shots $shot --model $model --train_percentage $percentage --example_selector $example_selector --with_containment False --with_validation_error_handling False --schema_type $schema_type
+#          python prompts/5_in-context_learning/in_context_list.py  --dataset $dataset --shots $shot --model $model --train_percentage $percentage --example_selector $example_selector
 #        done
 #      done
 #    done
@@ -61,8 +61,8 @@ done
 #      do
 #        for example_selector in "${example_selectors[@]}"
 #        do
-#          python prompts/2_schema-based_attribute_value_extraction/5_in-context_learning/in_context_schema_description_with_example_values.py --dataset $dataset --shots $shot --model $model --train_percentage $percentage --example_selector $example_selector --with_containment False --with_validation_error_handling False --schema_type $schema_type
-#          python prompts/2_schema-based_attribute_value_extraction/5_in-context_learning/in_context_list.py  --dataset $dataset --shots $shot --model $model --train_percentage $percentage --example_selector $example_selector
+#          python prompts/5_in-context_learning/in_context_schema_description_with_example_values.py --dataset $dataset --shots $shot --model $model --train_percentage $percentage --example_selector $example_selector --with_containment False --with_validation_error_handling False --schema_type $schema_type
+#          python prompts/5_in-context_learning/in_context_list.py  --dataset $dataset --shots $shot --model $model --train_percentage $percentage --example_selector $example_selector
 #        done
 #      done
 #    done
@@ -81,8 +81,8 @@ done
 #      do
 #        for example_selector in "${example_selectors[@]}"
 #        do
-#          python prompts/2_schema-based_attribute_value_extraction/5_in-context_learning/in_context_schema_description_with_example_values.py --dataset $dataset --shots $shot --model $model --train_percentage $percentage --example_selector $example_selector --with_containment False --with_validation_error_handling False --schema_type $schema_type
-#          python prompts/2_schema-based_attribute_value_extraction/5_in-context_learning/in_context_list.py  --dataset $dataset --shots $shot --model $model --train_percentage $percentage --example_selector $example_selector
+#          python prompts/5_in-context_learning/in_context_schema_description_with_example_values.py --dataset $dataset --shots $shot --model $model --train_percentage $percentage --example_selector $example_selector --with_containment False --with_validation_error_handling False --schema_type $schema_type
+#          python prompts/5_in-context_learning/in_context_list.py  --dataset $dataset --shots $shot --model $model --train_percentage $percentage --example_selector $example_selector
 #        done
 #      done
 #    done
