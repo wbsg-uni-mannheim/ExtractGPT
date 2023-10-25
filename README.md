@@ -1,5 +1,6 @@
 # Attribute Value Extraction using Large Language Models
 This repository contains code and data for experiments on attribute value extraction using large language models.
+A preprint of the paper "Product Attribute Value Extraction using Large Language Models" can be found [here](https://arxiv.org/abs/2310.12537).
 
 ## Requirements
 
@@ -102,6 +103,78 @@ User: Split the product title by whitespace.
       Unknown attribute values should be marked as n/a.
 User: Dr. Brown's Infant-to-Toddler Toothbrush Set, 1.4 Ounce, Blue
 ```
+
+### Example Product Offers for testing
+
+We provide a list of example product offers (Task Input) and the expected output (Task Output).
+These examples can be used to quickly test the LLMs and the prompts.
+
+``` 
+User: Dr. Brown's Infant-to-Toddler Toothbrush Set, 1.4 Ounce, Blue
+Expected Task Output (Answer by the LLM): 
+{
+    "Brand": "Dr. Brown's",
+    "Color": "Blue",
+    "Material": "n/a"
+    "Age": "Infant-to-Toddler"
+    "Size": "n/a"
+}
+
+``` 
+
+``` 
+User: SJP by Sarah Jessica Parker Women's Fawn Pointed Toe Dress Pump, Candy, 6.5 Medium US
+Expected Task Output (Response of the LLM): 
+{
+  "Brand": "SJP by Sarah Jessica Parker",
+  "Gender": "Women's",
+  "Model name": "Fawn",
+  "Shoe type": "Pointed Toe Dress Pump",
+  "Color": "Candy",
+  "Size": "6.5 Medium US"
+  "Sport": "n/a"
+}
+
+```
+
+``` 
+User: Bigelow Green Tea with Wild Blueberry & Acai, 20 Count Box (Pack of 6), Caffeinated Green Tea, 120 Teabags Total
+Expected Task Output (Response of the LLM): 
+{
+  "Brand": "Bigelow",
+  "Tea variety": "Green Tea",
+  "Flavor": "Wild Blueberry & Acai",
+  "Net content": 120,
+  "Pack size": "Pack of 6",
+  "Caffeine content": "Caffeinated",
+  "Item form": "Teabags"
+}
+
+```
+
+``` 
+User: YTQHXY Crank Fishing Lure 60mm 6.5g Artificial Hard Bait Wobblers 3D Eyes Plastic Japan Bait Bass Perch Fishing Peche YE-512
+Expected Task Output (Response of the LLM): 
+{
+  "Model Number": "YE-512",
+  "Brand Name": "YTQHXY",
+  "Length": "60mm",
+  "Weight": "6.5g"
+}
+
+``` 
+
+``` 
+User: POLISI Children Kids Winter Skate Snowmobile Glasses Snowboard Ski Snow Goggles UV400 Anti-Fog Lens Skiing Eyewear
+Expected Task Output (Response of the LLM): 
+{
+  "Sport Type": "Skiing",
+  "Brand Name": "POLISI"
+  "Lenses Optical Attribute": "UV400 Anti-Fog Lens",
+  "Frame Material": "n/a"
+}
+
+``` 
 
 ### Execution
 
