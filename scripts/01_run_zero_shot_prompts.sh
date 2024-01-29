@@ -5,7 +5,7 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3
 
 # Run zero-shot experiments
 datasets=( "oa-mine" "ae-110k" )
-models=( "gpt-3.5-turbo-0613"  ) # "gpt-4-0613"
+models=( "gpt-3.5-turbo-1106"  ) # "gpt-4-0613"
 schema_types=( "textual" "json_schema" "compact" )
 train_percentage=0.2 # 1.0
 

@@ -31,12 +31,13 @@ from pieutils.search import CategoryAwareMaxMarginalRelevanceExampleSelector, Ca
 @click.option('--shots', default=3, help='Number of shots for few-shot learning')
 @click.option('--example_selector', default='MaxMarginalRelevance', help='Example selector for few-shot learning')
 @click.option('--train_percentage', default=1.0, help='Percentage of training data used for in-context learning')
-def main(dataset, model, verbose, shots, example_selector, train_percentage):
+@click.option('--temperature', default=0.0, help='Temperature values between 0.0 and 2.0')
+def main(dataset, model, verbose, shots, example_selector, train_percentage,  temperature):
     # Load task template
     with open('prompts/task_template.json', 'r') as f:
         task_dict = json.load(f)
 
-    task_dict['task_name'] = "multiple_attribute_values-great-incontext-{}-{}-shots".format(dataset, shots)
+    task_dict['task_name'] = "multiple_attribute_values-great-incontext-{}-{}-shots-{}-{}".format(dataset, shots, example_selector, temperature)
     task_dict['task_prefix'] = "Extract the attribute values from the product {part} below in a JSON format. Valid " \
                                 "attributes are {attributes}. If an attribute is not present in the product title, " \
                                 "the attribute value is supposed to be 'n/a'."
@@ -51,7 +52,7 @@ def main(dataset, model, verbose, shots, example_selector, train_percentage):
     # Initialize model
     task_dict['model'] = model
     if 'gpt-3' in task_dict['model'] or 'gpt-4' in task_dict['model']:
-        llm = ChatOpenAI(model_name=task_dict['model'], temperature=0)
+        llm = ChatOpenAI(model_name=task_dict['model'], temperature=temperature)
     else:
         if 'StableBeluga' in task_dict['model']:
             tokenizer = AutoTokenizer.from_pretrained(task_dict['model'], use_fast=False)

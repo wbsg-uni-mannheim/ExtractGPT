@@ -17,7 +17,7 @@ from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 
 from pieutils import save_populated_task, create_pydanctic_model_from_pydantic_meta_model, \
-    create_dict_of_pydanctic_product, convert_to_json_schema, parse_llm_response_to_json
+    create_dict_of_pydanctic_product, convert_to_json_schema, parse_llm_response_to_json, ensemble_predictions
 from pieutils.evaluation import evaluate_predictions
 from pieutils.fusion import fuse_models
 from pieutils.preprocessing import update_task_dict_from_test_set, load_known_attribute_values
@@ -36,21 +36,25 @@ from pieutils.search import CategoryAwareMaxMarginalRelevanceExampleSelector, Ca
 @click.option('--train_percentage', default=1.0, help='Percentage of training data used for in-context learning')
 @click.option('--with_containment', default=False, help='Use containment')
 @click.option('--with_validation_error_handling', default=False, help='Use validation error handling')
-@click.option('--schema_type', default='json_schema', help='Schema to use - json_schema, json_schema_no_type or compact')
+@click.option('--schema_type', default='json_schema',
+              help='Schema to use - json_schema, json_schema_no_type or compact')
 @click.option('--no_example_values', default=10, help='Number of example values extracted from training set')
-@click.option('--temperature', default=0.0, help='Temperature values between 0.0 and 2.0')
-def main(dataset, model, verbose, shots, example_selector, train_percentage, with_containment, with_validation_error_handling, schema_type, no_example_values, temperature):
+@click.option('--temperature', default=0.0, help='Temperature value between 0.0 and 2.0')
+def main(dataset, model, verbose, shots, example_selector, train_percentage, with_containment,
+         with_validation_error_handling, schema_type, no_example_values, temperature):
     # Load task template
     with open('prompts/task_template.json', 'r') as f:
         task_dict = json.load(f)
 
-    task_dict['task_name'] = "chatgpt_description_with_example_values_in-context_learning_{}_{}_{}_{}_{}_{}-{}_{}_seed_{}".format(
+    task_dict[
+        'task_name'] = "chatgpt_description_with_example_values_in-context_learning_{}_{}_{}_{}_{}_{}-{}_{}_ensembling_shuffle".format(
         dataset, model, shots, example_selector, train_percentage, 'containment_check' if with_containment else '',
-        'validation_error_handling' if with_containment else '', schema_type, temperature).replace('.', '_').replace('-', '_').replace('/', '_')
+        'validation_error_handling' if with_containment else '', schema_type, temperature).replace('.', '_').replace(
+        '-', '_').replace('/', '_')
     task_dict['task_prefix'] = "Split the product title by whitespace. " \
                                "Extract the valid attribute values from the product {part} in JSON format. Keep the " \
                                "exact surface form of all attribute values. All valid attributes are provided in the " \
-                               "JSON schema. Unknown attribute values should be marked as n/a. "
+                               "JSON schema. Unknown attribute values should be marked as n/a."
 
     task_dict['dataset_name'] = dataset
     task_dict['timestamp'] = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -65,10 +69,16 @@ def main(dataset, model, verbose, shots, example_selector, train_percentage, wit
         print('Known attribute values:')
         print(known_attribute_values)
 
+    # # Filter examples top 5 examples
+    # task_dict['examples'] = task_dict['examples'][:5]
+    # # Filter known attribute values based on first example
+    # known_attribute_values = {k: v for k, v in known_attribute_values.items() if k in task_dict['examples'][0]['category']}
+    # task_dict['known_attributes'] = {k: v for k, v in task_dict['known_attributes'].items() if k in task_dict['examples'][0]['category']}
+
     # Initialize model
     task_dict['model'] = model
     if 'gpt-3' in task_dict['model'] or 'gpt-4' in task_dict['model']:
-        llm = ChatOpenAI(model_name=task_dict['model'], temperature=temperature)
+        llm = ChatOpenAI(model_name=task_dict['model'], temperature=0)
     else:
         tokenizer = AutoTokenizer.from_pretrained(task_dict['model'], use_fast=False)
         model = AutoModelForCausalLM.from_pretrained(task_dict['model'], torch_dtype=torch.float16,
@@ -80,7 +90,6 @@ def main(dataset, model, verbose, shots, example_selector, train_percentage, wit
         llm = HuggingFacePipeline(pipeline=pipe)
     default_llm = ChatOpenAI(model_name='gpt-3.5-turbo-0613', temperature=0)
 
-
     # Ask LLM to generate meta models for each product category and attribute
 
     # Create Chains
@@ -88,10 +97,10 @@ def main(dataset, model, verbose, shots, example_selector, train_percentage, wit
                                                                       "descriptions of product categories and their "
                                                                       "attributes following this JSON schema: \n {schema}.")
     human_task_meta_model = HumanMessagePromptTemplate.from_template("Write short descriptions for the product category"
-                                                                      " {category} and the attributes {attributes} that are helpful to identify relevant attribute values in product titles."
+                                                                     " {category} and the attributes {attributes} that are helpful to identify relevant attribute values in product titles."
                                                                      "The descriptions should not be longer than one sentence."
-                                                                      "The following attribute values are known for each attribute: \n"
-                                                                     "{known_attribute_values}. \n" 
+                                                                     "The following attribute values are known for each attribute: \n"
+                                                                     "{known_attribute_values}. \n"
                                                                      "Respond with a JSON object following the provided schema.")
     prompt_meta_model = ChatPromptTemplate(messages=[system_message_prompt, human_task_meta_model])
     pydantic_models = {}
@@ -104,7 +113,7 @@ def main(dataset, model, verbose, shots, example_selector, train_percentage, wit
             llm=default_llm,
             verbose=verbose
         )
-        #chain_meta_model = create_structured_output_chain(ProductCategory, llm, prompt_meta_model, verbose=True)
+        # chain_meta_model = create_structured_output_chain(ProductCategory, llm, prompt_meta_model, verbose=True)
         known_attribute_values_per_category = json.dumps(known_attribute_values[category])
         response = chain.run({'schema': convert_to_json_schema(ProductCategory, False), 'category': category,
                               'attributes': ', '.join(task_dict['known_attributes'][category]),
@@ -116,29 +125,35 @@ def main(dataset, model, verbose, shots, example_selector, train_percentage, wit
         models_json[category] = create_dict_of_pydanctic_product(pydantic_models[category])
 
     # Persist models
-    with open('prompts/meta_models/models_by_{}_{}.json'.format(task_dict['task_name'], 'default_gpt3_5', task_dict['dataset_name']), 'w', encoding='utf-8') as f:
+    with open('prompts/meta_models/models_by_{}_{}.json'.format(task_dict['task_name'], 'default_gpt3_5',
+                                                                task_dict['dataset_name']), 'w', encoding='utf-8') as f:
         json.dump(models_json, f, indent=4)
 
     # Create Chains
-    system_message_prompt = SystemMessagePromptTemplate.from_template("You are a world class algorithm for extracting information in structured formats. \n {schema} ")
+    system_message_prompt = SystemMessagePromptTemplate.from_template(
+        "You are a world class algorithm for extracting information in structured JSON formats. \n {schema} ")
     human_task_prompt = HumanMessagePromptTemplate.from_template(task_dict['task_prefix'])
 
     # Add few shot sampling
     if example_selector == 'MaxMarginalRelevance':
         category_example_selector = CategoryAwareMaxMarginalRelevanceExampleSelector(task_dict['dataset_name'],
-                                                                                 list(task_dict['known_attributes'].keys()),
-                                                                                 category_2_pydantic_models=pydantic_models,
-                                                                                 load_from_local=True, k=shots)
+                                                                                     list(task_dict[
+                                                                                              'known_attributes'].keys()),
+                                                                                     category_2_pydantic_models=pydantic_models,
+                                                                                     load_from_local=True, k=shots)
     elif example_selector == 'SemanticSimilarity':
         category_example_selector = CategoryAwareSemanticSimilarityExampleSelector(task_dict['dataset_name'],
-                                                                                 list(task_dict['known_attributes'].keys()),
-                                                                                 category_2_pydantic_models=pydantic_models,
-                                                                                 load_from_local=False, k=shots, train_percentage=train_percentage)
+                                                                                   list(task_dict[
+                                                                                            'known_attributes'].keys()),
+                                                                                   category_2_pydantic_models=pydantic_models,
+                                                                                   load_from_local=False, k=shots,
+                                                                                   train_percentage=train_percentage)
     elif example_selector == 'SemanticSimilarityDifferentAttributeValues':
-        category_example_selector = CategoryAwareSemanticSimilarityDifferentAttributeValuesExampleSelector(task_dict['dataset_name'],
-                                                                                 list(task_dict['known_attributes'].keys()),
-                                                                                 category_2_pydantic_models=pydantic_models,
-                                                                                 load_from_local=True, k=shots, train_percentage=train_percentage)
+        category_example_selector = CategoryAwareSemanticSimilarityDifferentAttributeValuesExampleSelector(
+            task_dict['dataset_name'],
+            list(task_dict['known_attributes'].keys()),
+            category_2_pydantic_models=pydantic_models,
+            load_from_local=True, k=shots, train_percentage=train_percentage)
 
     elif example_selector == 'Random':
         category_example_selector = CategoryAwareRandomExampleSelector(task_dict['dataset_name'],
@@ -147,16 +162,16 @@ def main(dataset, model, verbose, shots, example_selector, train_percentage, wit
                                                                        k=shots)
     elif example_selector == 'Fixed':
         category_example_selector = CategoryAwareFixedExampleSelector(task_dict['dataset_name'],
-                                                                                 list(task_dict['known_attributes'].keys()),
-                                                                                 category_2_pydantic_models=pydantic_models,
-                                                                                 load_from_local=True, k=shots)
+                                                                      list(task_dict['known_attributes'].keys()),
+                                                                      category_2_pydantic_models=pydantic_models,
+                                                                      load_from_local=True, k=shots)
     else:
         raise NotImplementedError("Example selector {} not implemented".format(example_selector))
 
     # Define the few-shot prompt.
     few_shot_prompt = FewShotChatMessagePromptTemplate(
         # The input variables select the values to pass to the example_selector
-        input_variables=["input", "category"],
+        input_variables=["input", "category", "attribute_order"],
         example_selector=category_example_selector,
         example_prompt=ChatPromptTemplate.from_messages(
             [("human", "{input}"), ("ai", "{output}")]
@@ -187,8 +202,10 @@ def main(dataset, model, verbose, shots, example_selector, train_percentage, wit
 
     # Error handling chain:
     ai_response = AIMessagePromptTemplate.from_template("{response}")
-    human_error_handling_request = HumanMessagePromptTemplate.from_template("Change the attributes '{error}' to string values. List values should be concatenated by ' '.")
-    error_handling_prompt_list = [system_message_prompt, human_task_prompt, human_message_prompt, ai_response, human_error_handling_request]
+    human_error_handling_request = HumanMessagePromptTemplate.from_template(
+        "Change the attributes '{error}' to string values. List values should be concatenated by ' '.")
+    error_handling_prompt_list = [system_message_prompt, human_task_prompt, human_message_prompt, ai_response,
+                                  human_error_handling_request]
     error_handling_prompt = ChatPromptTemplate(messages=error_handling_prompt_list)
     error_handling_chain = LLMChain(
         prompt=error_handling_prompt,
@@ -196,7 +213,7 @@ def main(dataset, model, verbose, shots, example_selector, train_percentage, wit
         verbose=verbose
     )
 
-    def validation_error_handling(category, input_text, response, error,  part='title'):
+    def validation_error_handling(category, input_text, response, error, part='title'):
 
         response_dict = json.loads(response)
         error_attributes = [error['loc'][0] for error in error.errors() if error['type'] == 'type_error.str']
@@ -205,7 +222,8 @@ def main(dataset, model, verbose, shots, example_selector, train_percentage, wit
         pred = None
         error_handling_response = error_handling_chain.run(input=input_text,
                                                            schema=convert_to_json_schema(pydantic_models[category]),
-                                                           response=json.dumps(response_dict), error="', '".join(error_attributes), part=part)
+                                                           response=json.dumps(response_dict),
+                                                           error="', '".join(error_attributes), part=part)
         try:
             # Convert json string into pydantic model
             print(json.loads(error_handling_response))
@@ -219,74 +237,101 @@ def main(dataset, model, verbose, shots, example_selector, train_percentage, wit
 
     def select_and_run_llm(category, input_text, part='title', with_validation_error_handling=True,
                            with_containment=True, schema_type='json_schema'):
-        pred = None
-        try:
-            response = chain.run(input=input_text,
-                                 schema=convert_to_json_schema(pydantic_models[category], schema_type=schema_type),
-                                 part=part, category=category)
 
+        # Shuffle the attributes and ensemble the prediction using majority voting
+        preds = {}
+        num_ensembles = 3  # Fix to 3 for now
+        for i in range(0, num_ensembles):
+            pred = None
             try:
-                # Convert json string into pydantic model
-                if verbose:
-                    print(json.loads(response))
-                pred = pydantic_models[category](**json.loads(response))
-            except ValidationError as valError:
-                if with_validation_error_handling:
-                    pred, response = validation_error_handling(category, input_text, response, valError)
-                else:
-                    print('Validation Error: {}'.format(valError))
-            except JSONDecodeError as e:
-                converted_response = parse_llm_response_to_json(response)
-                if verbose:
-                    print(converted_response)
+                # Shuffle the attributes (schema properties)
+                properties = None
+                attribute_order = None
+                if i > 0:
+                    # Keep the original order for the first ensemble
+                    properties = list(pydantic_models[category].schema()['properties'].items())
+                    random.seed(i)
+                    random.shuffle(properties)
+                    attribute_order = [p[0] for p in properties]
+
+                # Run Chain
+                response = chain.run(input=input_text,
+                                     schema=convert_to_json_schema(pydantic_models[category], schema_type=schema_type,
+                                                                   properties=properties),
+                                     part=part, category=category, attribute_order=attribute_order)
+
                 try:
-                    pred = pydantic_models[category](**converted_response)
+                    # Convert json string into pydantic model
+                    if verbose:
+                        print(json.loads(response))
+                    pred = pydantic_models[category](**json.loads(response))
                 except ValidationError as valError:
                     if with_validation_error_handling:
                         pred, response = validation_error_handling(category, input_text, response, valError)
                     else:
                         print('Validation Error: {}'.format(valError))
-                except Exception as e:
-                    print(e)
-            except Exception as e:
-                print(e)
-                print('Response: ')
-                print(response)
-
-            if pred is not None and with_containment:
-                # Verify if the extracted attribute values are contained in the input text and make sure that no loop is entered.
-                not_found_values = [v for v in pred.dict().values() if
-                                    v is not None and v != 'n/a' and v not in input_text]
-                previous_responses = []
-                while len(not_found_values) > 0 and response not in previous_responses:
-                    # Verify extracted attribute values
+                except JSONDecodeError as e:
+                    converted_response = parse_llm_response_to_json(response)
                     if verbose:
-                        print('Not found values: {}'.format(not_found_values))
-                    # Try this only once to avoid infinite loops
-                    verified_response = verification_chain.run(input=input_text,
-                                                               schema=convert_to_json_schema(pydantic_models[category]),
-                                                               response=response, values='", "'.join(not_found_values),
-                                                               part=part)
-                    previous_responses.append(response)
+                        print(converted_response)
                     try:
-                        if verbose:
-                            print(json.loads(verified_response))
-                        pred = pydantic_models[category](**json.loads(verified_response))
-                        not_found_values = [v for v in pred.dict().values() if
-                                            v is not None and v != 'n/a' and v not in input_text]
+                        pred = pydantic_models[category](**converted_response)
                     except ValidationError as valError:
                         if with_validation_error_handling:
-                            pred, verified_response = validation_error_handling(category, input_text, verified_response,
-                                                                                valError, part)
+                            pred, response = validation_error_handling(category, input_text, response, valError)
                         else:
                             print('Validation Error: {}'.format(valError))
-                    except JSONDecodeError as e:
-                        print('Error: {}'.format(e))
-        except Exception as e:
-            print(e)
+                    except Exception as e:
+                        print(e)
+                except Exception as e:
+                    print(e)
+                    print('Response: ')
+                    print(response)
+
+                if pred is not None and with_containment:
+                    # Verify if the extracted attribute values are contained in the input text and make sure that no loop is entered.
+                    not_found_values = [v for v in pred.dict().values() if
+                                        v is not None and v != 'n/a' and v not in input_text]
+                    previous_responses = []
+                    while len(not_found_values) > 0 and response not in previous_responses:
+                        # Verify extracted attribute values
+                        if verbose:
+                            print('Not found values: {}'.format(not_found_values))
+                        # Try this only once to avoid infinite loops
+                        verified_response = verification_chain.run(input=input_text,
+                                                                   schema=convert_to_json_schema(
+                                                                       pydantic_models[category]),
+                                                                   response=response,
+                                                                   values='", "'.join(not_found_values),
+                                                                   part=part)
+                        previous_responses.append(response)
+                        try:
+                            if verbose:
+                                print(json.loads(verified_response))
+                            pred = pydantic_models[category](**json.loads(verified_response))
+                            not_found_values = [v for v in pred.dict().values() if
+                                                v is not None and v != 'n/a' and v not in input_text]
+                        except ValidationError as valError:
+                            if with_validation_error_handling:
+                                pred, verified_response = validation_error_handling(category, input_text,
+                                                                                    verified_response,
+                                                                                    valError, part)
+                            else:
+                                print('Validation Error: {}'.format(valError))
+                        except JSONDecodeError as e:
+                            print('Error: {}'.format(e))
+            except Exception as e:
+                print(e)
+
+            preds[i] = pred
+
+        # Ensemble the predictions
+        pred = None
+        if len(preds) > 0:
+            pred = ensemble_predictions(preds, pydantic_models[category])
         return pred
 
-    #select_and_run_llm('Safety Mask', 'Reusable Fashion Protective Sponge Face Masks Breathable Anti-Dust Elastic Ear Loop Mask, 3 Black and 3 Grey')
+    # select_and_run_llm('Safety Mask', 'Reusable Fashion Protective Sponge Face Masks Breathable Anti-Dust Elastic Ear Loop Mask, 3 Black and 3 Grey')
 
     with get_openai_callback() as cb:
         # Mave dataset has multiple sources. We need to iterate over all of them.
@@ -297,8 +342,10 @@ def main(dataset, model, verbose, shots, example_selector, train_percentage, wit
             for part in parts:
                 example_part = part if part != 'title' else 'input'
                 example_part = example_part if example_part != 'attributes' else 'rest'
-                preds = [select_and_run_llm(example['category'], example[example_part], part=part, with_containment=with_containment,
-                                            with_validation_error_handling=with_validation_error_handling, schema_type=schema_type) for example in
+                preds = [select_and_run_llm(example['category'], example[example_part], part=part,
+                                            with_containment=with_containment,
+                                            with_validation_error_handling=with_validation_error_handling,
+                                            schema_type=schema_type) for example in
                          tqdm(task_dict['examples'], disable=not verbose)]
                 part_predictions[example_part] = preds
 
@@ -311,7 +358,8 @@ def main(dataset, model, verbose, shots, example_selector, train_percentage, wit
 
         # Mave dataset has multiple sources. We need to iterate over all of them.
         elif dataset == 'mave_v2':
-            hashed_predictions = {category: {} for category in task_dict['known_attributes']} # Cache predictions per category
+            hashed_predictions = {category: {} for category in
+                                  task_dict['known_attributes']}  # Cache predictions per category
             preds = []
             # Run LLM for each part of the product
             for example in tqdm(task_dict['examples'], disable=not verbose):
@@ -321,8 +369,10 @@ def main(dataset, model, verbose, shots, example_selector, train_percentage, wit
                     example_preds.append(hashed_predictions[example['category']][hashed_input])
                     print("Cached")
                     continue
-                title_prediction = select_and_run_llm(example['category'], example['input'], part='title', with_containment=with_containment,
-                                            with_validation_error_handling=with_validation_error_handling, schema_type=schema_type)
+                title_prediction = select_and_run_llm(example['category'], example['input'], part='title',
+                                                      with_containment=with_containment,
+                                                      with_validation_error_handling=with_validation_error_handling,
+                                                      schema_type=schema_type)
                 hashed_predictions[example['category']][hashed_input] = title_prediction
                 example_preds.append(title_prediction)
 
@@ -333,8 +383,10 @@ def main(dataset, model, verbose, shots, example_selector, train_percentage, wit
                         print("Cached")
                         continue
 
-                    description_prediction = select_and_run_llm(example['category'], description, part='description', with_containment=with_containment,
-                                            with_validation_error_handling=with_validation_error_handling, schema_type=schema_type)
+                    description_prediction = select_and_run_llm(example['category'], description, part='description',
+                                                                with_containment=with_containment,
+                                                                with_validation_error_handling=with_validation_error_handling,
+                                                                schema_type=schema_type)
                     hashed_predictions[example['category']][hashed_description] = description_prediction
                     example_preds.append(description_prediction)
 
@@ -345,7 +397,8 @@ def main(dataset, model, verbose, shots, example_selector, train_percentage, wit
 
         else:
             preds = [select_and_run_llm(example['category'], example['input'], with_containment=with_containment,
-                                            with_validation_error_handling=with_validation_error_handling, schema_type=schema_type) for example in
+                                        with_validation_error_handling=with_validation_error_handling,
+                                        schema_type=schema_type) for example in
                      tqdm(task_dict['examples'], disable=not verbose)]
         task_dict['total_tokens'] = cb.total_tokens
         print(f"Total Tokens: {cb.total_tokens}")
