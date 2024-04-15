@@ -128,7 +128,7 @@ def load_train_for_vector_store(dataset_name, categories, train_percentage=1.0):
 
 def initialize_vector_store(dataset_name, load_from_local=False, categories=None, train_percentage=1.0):
     # Load the training data.
-    if dataset_name in ['mave', 'mave_v2', 'ae-110k', 'oa-mine']:
+    if dataset_name in ['mave', 'mave_v2', 'ae-110k', 'oa-mine', 'wdc_products_normalized']:
         train_records = load_train_for_vector_store(dataset_name, categories=categories, train_percentage=train_percentage)
     else:
         raise ValueError(f'Dataset {dataset_name} not supported!')
@@ -273,10 +273,10 @@ def convert_example_to_pydantic_model_example(example, pydantic_model):
 class CategoryAwareMaxMarginalRelevanceExampleSelector(BaseExampleSelector):
 
     def __init__(self, dataset_name, categories, category_2_pydantic_models=None, load_from_local=False, k=5,
-                 tabular=False) -> None:
+                 tabular=False, train_percentage=1) -> None:
         """Initialize the example selector from the datasets"""
         category_to_vector_store = initialize_vector_store(dataset_name, load_from_local=load_from_local,
-                                                           categories=categories)
+                                                           categories=categories, train_percentage=train_percentage)
         # Initialize Different example selectors for each category.
         self.example_selector_by_category = {
             category: MaxMarginalRelevanceExampleSelector(vectorstore=category_to_vector_store[category], k=k) for

@@ -3,8 +3,30 @@ import json
 import os
 from typing import Optional
 
-from pydantic import create_model, Field
+from pydantic import create_model, Field, ValidationError
 
+
+def ensemble_predictions(preds, pydantic_model):
+    # Use majority voting
+    pred = {}
+    attributes = pydantic_model.__fields__.keys()
+    for attribute in attributes:
+        # Get all predictions for the attribute
+        attribute_preds = [pred.dict()[attribute] for pred in preds.values()
+                           if pred is not None and attribute in pred.dict()]
+        # Get the most common prediction
+        if len(attribute_preds) == 0:
+            pred[attribute] = 'n/a'
+        else:
+            pred[attribute] = max(attribute_preds, key=attribute_preds.count)
+
+    try:
+        pred = pydantic_model(**pred)
+    except ValidationError as e:
+        print(e)
+        pred = None
+
+    return pred
 
 def prepare_example_task_prefixes(example, task_prefix):
     example['task_prefix'] = task_prefix.replace('[PLACEHOLDER]', example['attribute'])
@@ -144,7 +166,7 @@ def save_populated_task(task, task_dict):
         os.makedirs('prompts/runs')
 
     with gzip.open(path_to_result_file, 'wt', encoding='utf-8') as fp:
-        json.dump(task_dict, fp, indent=4)
+        json.dump(task_dict, fp, indent=4, ensure_ascii=False)
 
 
 def update_handlabelled_testset(source_path, target_path):
@@ -166,21 +188,29 @@ def update_handlabelled_testset(source_path, target_path):
             f.write('{}\n'.format(json.dumps(record)))
 
 
-def convert_to_json_schema(pydantic_model, replace_description=True, schema_type='json_schema'):
+def convert_to_json_schema(pydantic_model, replace_description=True, schema_type='json_schema', properties=None, replacement_attribute_values=None):
     """Convert a Pydantic model to a JSON schema.
         schema_type: Schema to use - json_schema, json_schema_no_type or compact
         """
+    # Get the schema of the Pydantic model if schema_properties is not provided
     schema = pydantic_model.schema()
+    if properties is None:
+        properties = list(schema['properties'].items())
+
     if schema_type in ("json_schema", "json_schema_no_type"):
         parameters = {'type': 'object', 'properties': {}}
 
-        for property_name, property_schema in schema['properties'].items():
+        for property_name, property_schema in properties:
             if property_name in ("title"):
                 continue
             if schema_type == "json_schema_no_type":
                 parameters['properties'][property_name] = {k: v for k, v in property_schema.items() if k not in ("title", "type")}
             else:
                 parameters['properties'][property_name] = {k: v for k, v in property_schema.items() if k not in ("title")}
+
+        if replacement_attribute_values is not None:
+            for attribute, values in replacement_attribute_values.items():
+                parameters['properties'][attribute]['examples'] = list(values)
 
         # Add required fields
         if 'required' in schema:
@@ -219,12 +249,15 @@ def convert_to_json_schema(pydantic_model, replace_description=True, schema_type
     elif schema_type == "compact":
         """Compact version of the JSON schema"""
         convert_schema = { }
-        for property_name, property_schema in schema['properties'].items():
+        for property_name, property_schema in properties:
             if property_name in ("title"):
                 continue
             if 'description' in property_schema:
                 if 'examples' in property_schema:
-                    convert_schema[property_name] = f"{property_schema['description']} - Examples: {', '.join(property_schema['examples'])}"
+                    if replacement_attribute_values is not None and property_name in replacement_attribute_values:
+                        convert_schema[property_name] = f"{property_schema['description']} - Examples: {', '.join(replacement_attribute_values[property_name])}"
+                    else:
+                        convert_schema[property_name] = f"{property_schema['description']} - Examples: {', '.join(property_schema['examples'])}"
                 else:
                     convert_schema[property_name] = property_schema['description']
 
@@ -232,12 +265,15 @@ def convert_to_json_schema(pydantic_model, replace_description=True, schema_type
         """Textual version of the JSON schema"""
         introduction = f"A product offer from the product category {schema['title']} has the following attributes: {', '.join(schema['properties'].keys())}."
         attributes = []
-        for property_name, property_schema in schema['properties'].items():
+        for property_name, property_schema in properties:
             if property_name in ("title"):
                 continue
             if 'description' in property_schema:
                 if 'examples' in property_schema:
-                    attribute_text = f"The attribute {property_name} is defined as: {property_schema['description']} Known attribute values are {', '.join(property_schema['examples'])}."
+                    if replacement_attribute_values is not None and property_name in replacement_attribute_values:
+                        attribute_text = f"The attribute {property_name} is defined as: {property_schema['description']} Known attribute values are {', '.join(replacement_attribute_values[property_name])}."
+                    else:
+                        attribute_text = f"The attribute {property_name} is defined as: {property_schema['description']} Known attribute values are {', '.join(property_schema['examples'])}."
 
                 else:
                     attribute_text = f"The attribute {property_name} is defined as: {property_schema['description']}"

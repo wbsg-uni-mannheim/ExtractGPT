@@ -16,10 +16,10 @@ To run the open-source LLMs GPU-support is required.
 The codebase requires python 3.9 To install dependencies we suggest to use a conda virtual environment:
 
 ```
-conda create -n avellms python=3.9
-conda activate avellms
+conda create -n ExtractGPT python=3.9
+conda activate ExtractGPT
 pip install -r requirements.txt
-pip install pieutils/
+pip install .
 ```
 
 ## Dataset
@@ -36,7 +36,7 @@ Further statistics and information about the subsets can be found in the table b
 | Product Offers      | 286            | 1,452        | 491          | 311           | 1,568        | 524          |
 
 
-The dataset subsets of OA-Mine and AE-110k can be available in the folder `data\processed_datasets`.
+The dataset subsets of OA-Mine and AE-110k are available in the folder `data\processed_datasets`.
 
 If you want to start from scratch, you can download the datasets and preprocess them yourself.
 The dataset OA-Mine and AE-110k have to be added as raw data to the folder `data\raw`.

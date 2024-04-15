@@ -8,4 +8,4 @@
 /runs/
 *.faiss
 *.pkl
-data/
+data/faiss_indexes/

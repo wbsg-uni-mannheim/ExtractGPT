@@ -128,7 +128,7 @@ def main(dataset, model, verbose, shots, example_selector, train_percentage, wit
         category_example_selector = CategoryAwareMaxMarginalRelevanceExampleSelector(task_dict['dataset_name'],
                                                                                  list(task_dict['known_attributes'].keys()),
                                                                                  category_2_pydantic_models=pydantic_models,
-                                                                                 load_from_local=True, k=shots)
+                                                                                 load_from_local=True, k=shots, train_percentage=train_percentage)
     elif example_selector == 'SemanticSimilarity':
         category_example_selector = CategoryAwareSemanticSimilarityExampleSelector(task_dict['dataset_name'],
                                                                                  list(task_dict['known_attributes'].keys()),
