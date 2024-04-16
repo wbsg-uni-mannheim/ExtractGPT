@@ -15,7 +15,8 @@ from pydantic import ValidationError
 from tqdm import tqdm
 
 from pieutils import save_populated_task, create_pydanctic_model_from_pydantic_meta_model, \
-    create_dict_of_pydanctic_product, convert_to_json_schema, create_tabular_pydanctic_model_from_pydantic_meta_model
+    create_dict_of_pydanctic_product, convert_to_json_schema, create_tabular_pydanctic_model_from_pydantic_meta_model, \
+    save_meta_model
 from pieutils.evaluation import evaluate_predictions
 from pieutils.preprocessing import update_task_dict_from_test_set, load_known_attribute_values
 from pieutils.pydantic_models import ProductCategory
@@ -93,12 +94,10 @@ def main(dataset, model, verbose, shots):
 
     llm = ChatOpenAI(model_name=task_dict['model'], temperature=0)
 
-    # Persist models
-    with open('prompts/meta_models/models_by_{}_{}.json'.format(task_dict['task_name'], task_dict['model'],
-                                                              task_dict['dataset_name']), 'w', encoding='utf-8') as f:
-        json.dump(models_json, f, indent=4)
+    # Save models
+    save_meta_model(task_dict['task_name'], 'default_gpt3_5', task_dict['dataset_name'], models_json)
 
-        # Create Chains
+    # Create Chains
     system_message_prompt = SystemMessagePromptTemplate.from_template(
         "You are a world class algorithm for extracting information in structured formats. \n {schema} ")
     human_task_prompt = HumanMessagePromptTemplate.from_template(task_dict['task_prefix'])

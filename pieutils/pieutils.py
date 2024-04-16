@@ -28,6 +28,18 @@ def ensemble_predictions(preds, pydantic_model):
 
     return pred
 
+
+def save_meta_model(task_name, llm_used_for_creation, dataset_name, models_json):
+    """Persist a meta model to a file."""
+    meta_model_dir = 'prompts/meta_models'
+    if not os.path.exists(meta_model_dir):
+        os.makedirs(meta_model_dir)
+
+    path = '{}/models_by_{}_{}.json'.format(meta_model_dir, task_name, llm_used_for_creation, dataset_name)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(models_json, f, indent=4)
+
+
 def prepare_example_task_prefixes(example, task_prefix):
     example['task_prefix'] = task_prefix.replace('[PLACEHOLDER]', example['attribute'])
     return example

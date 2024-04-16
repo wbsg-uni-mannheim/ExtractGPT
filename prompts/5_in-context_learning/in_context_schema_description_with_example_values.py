@@ -17,7 +17,7 @@ from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 
 from pieutils import save_populated_task, create_pydanctic_model_from_pydantic_meta_model, \
-    create_dict_of_pydanctic_product, convert_to_json_schema, parse_llm_response_to_json
+    create_dict_of_pydanctic_product, convert_to_json_schema, parse_llm_response_to_json, save_meta_model
 from pieutils.evaluation import evaluate_predictions
 from pieutils.fusion import fuse_models
 from pieutils.preprocessing import update_task_dict_from_test_set, load_known_attribute_values
@@ -116,8 +116,7 @@ def main(dataset, model, verbose, shots, example_selector, train_percentage, wit
         models_json[category] = create_dict_of_pydanctic_product(pydantic_models[category])
 
     # Persist models
-    with open('prompts/meta_models/models_by_{}_{}.json'.format(task_dict['task_name'], 'default_gpt3_5', task_dict['dataset_name']), 'w', encoding='utf-8') as f:
-        json.dump(models_json, f, indent=4)
+    save_meta_model(task_dict['task_name'], 'default_gpt3_5', task_dict['dataset_name'], models_json)
 
     # Create Chains
     system_message_prompt = SystemMessagePromptTemplate.from_template("You are a world class algorithm for extracting information in structured formats. \n {schema} ")
