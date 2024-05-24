@@ -1,10 +1,12 @@
 import json
 import random
+import time
 from datetime import datetime
 from json import JSONDecodeError
 
 import click
 import torch
+import transformers
 from dotenv import load_dotenv
 from langchain import LLMChain, HuggingFacePipeline
 from langchain.callbacks import get_openai_callback
@@ -37,7 +39,7 @@ def main(dataset, model, verbose, shots, example_selector, train_percentage,  te
     with open('prompts/task_template.json', 'r') as f:
         task_dict = json.load(f)
 
-    task_dict['task_name'] = "multiple_attribute_values-great-incontext-{}-{}-shots-{}-{}".format(dataset, shots, example_selector, temperature)
+    task_dict['task_name'] = "multiple_attribute_values-great-incontext-{}-{}-shots-{}-temp-{}-train_perc-{}".format(dataset, shots, example_selector, temperature, train_percentage)
     task_dict['task_prefix'] = "Extract the attribute values from the product {part} below in a JSON format. Valid " \
                                 "attributes are {attributes}. If an attribute is not present in the product title, " \
                                 "the attribute value is supposed to be 'n/a'."
@@ -45,6 +47,9 @@ def main(dataset, model, verbose, shots, example_selector, train_percentage,  te
     task_dict['dataset_name'] = dataset
     task_dict['timestamp'] = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     task_dict['train_percentage'] = train_percentage
+
+    print(f"Task Name: {task_dict['task_name']}")
+
 
     # Load examples into task dict
     task_dict = update_task_dict_from_test_set(task_dict)
@@ -78,6 +83,31 @@ def main(dataset, model, verbose, shots, example_selector, train_percentage,  te
             pipe = pipeline(
                 "text-generation", model=model, tokenizer=tokenizer, max_new_tokens=256, temperature=0, use_cache=True)
             llm = HuggingFacePipeline(pipeline=pipe)
+        elif 'Meta-Llama-3' in task_dict['model']:
+
+            tokenizer = AutoTokenizer.from_pretrained(task_dict['model'], cache_dir="/ceph/alebrink/cache")
+            model = AutoModelForCausalLM.from_pretrained(
+                task_dict['model'],
+                cache_dir="/ceph/alebrink/cache",
+                torch_dtype=torch.float16,
+                device_map="auto",
+            )
+            model.tie_weights()
+
+            hf_pipeline = transformers.pipeline(
+                "text-generation",
+                model=model,
+                tokenizer=tokenizer,
+                device_map="auto"
+            )
+
+            terminators = [
+                hf_pipeline.tokenizer.eos_token_id,
+                hf_pipeline.tokenizer.convert_tokens_to_ids("<|eot_id|>")
+            ]
+
+            llm = HuggingFacePipeline(pipeline=hf_pipeline)
+
         else:
             print('Unknown model!')
 
@@ -92,16 +122,16 @@ def main(dataset, model, verbose, shots, example_selector, train_percentage,  te
     if example_selector == 'MaxMarginalRelevance':
         category_example_selector = CategoryAwareMaxMarginalRelevanceExampleSelector(task_dict['dataset_name'],
                                                                                      list(task_dict['known_attributes'].keys()),
-                                                                                     load_from_local=True, k=shots)
+                                                                                     load_from_local=False, k=shots)
     elif example_selector == 'SemanticSimilarity':
         category_example_selector = CategoryAwareSemanticSimilarityExampleSelector(task_dict['dataset_name'],
                                                                                      list(task_dict['known_attributes'].keys()),
-                                                                                     load_from_local=True, k=shots)
+                                                                                     load_from_local=False, k=shots)
     elif example_selector == 'SemanticSimilarityDifferentAttributeValues':
         category_example_selector = CategoryAwareSemanticSimilarityDifferentAttributeValuesExampleSelector(task_dict['dataset_name'],
                                                                                  list(task_dict['known_attributes'].keys()),
                                                                                  category_2_pydantic_models=pydantic_models,
-                                                                                 load_from_local=True, k=shots, train_percentage=train_percentage)
+                                                                                 load_from_local=False, k=shots, train_percentage=train_percentage)
     elif example_selector == 'Random':
         category_example_selector = CategoryAwareRandomExampleSelector(task_dict['dataset_name'],
                                                                        list(task_dict['known_attributes'].keys()),
@@ -135,36 +165,67 @@ def main(dataset, model, verbose, shots, example_selector, train_percentage,  te
 
     def select_and_run_llm(category, input_text, part='title'):
         pred = None
-        try:
+        #try:
+        if 'Meta-Llama-3' in task_dict['model']:
+            messages = [{"role": "system", "content": prompt.messages[0].content},
+                        {"role": "human", "content": prompt.messages[1].format(part=part, attributes=', '.join(
+                            task_dict['known_attributes'][category]))}]
+
+            for few_shot_message in few_shot_prompt.format_prompt(input=input_text, category=category).to_messages():
+                hf_few_shot_message ={"role": few_shot_message.type, "content": few_shot_message.content}
+                messages.append(hf_few_shot_message)
+
+            # Add the human message prompt
+            messages.append({"role": "human", "content": prompt.messages[3].format(part=part, attributes=', '.join(
+                            task_dict['known_attributes'][category]))})
+            messages.append({"role": "human", "content": prompt.messages[4].format(input=input_text)})
+
+            hf_prompt = hf_pipeline.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True
+            )
+
+            hf_outputs = hf_pipeline(hf_prompt, max_new_tokens=256,
+                                     eos_token_id=terminators,
+                                     do_sample=True,
+                                     temperature=0.6,
+                                     top_p=0.9
+                                     )
+            response = hf_outputs[0]["generated_text"][len(hf_prompt):]
+            print(response)
+
+        else:
             response = chain.run(input=input_text, attributes=', '.join(task_dict['known_attributes'][category]),
-                             category=category, part=part)
-            #if verbose:
-            #    print(response)
+                         category=category, part=part)
+
+        #if verbose:
+        #    print(response)
+        try:
+            # Convert json string into pydantic model
+            json_response = json.loads(response)
+            if verbose:
+                print(json_response)
+            pred = pydantic_models[category](**json.loads(response))
+        except ValidationError as valError:
+            print(valError)
+        except JSONDecodeError as e:
+            converted_response = parse_llm_response_to_json(response)
+            if verbose:
+                print('Converted response: ')
+                print(converted_response)
             try:
-                # Convert json string into pydantic model
-                json_response = json.loads(response)
-                if verbose:
-                    print(json_response)
-                pred = pydantic_models[category](**json.loads(response))
+                pred = pydantic_models[category](**converted_response)
             except ValidationError as valError:
                 print(valError)
-            except JSONDecodeError as e:
-                converted_response = parse_llm_response_to_json(response)
-                if verbose:
-                    print('Converted response: ')
-                    print(converted_response)
-                try:
-                    pred = pydantic_models[category](**converted_response)
-                except ValidationError as valError:
-                    print(valError)
-                except Exception as e:
-                    print(e)
             except Exception as e:
                 print(e)
-                print('Response: ')
-                print(response)
         except Exception as e:
             print(e)
+            print('Response: ')
+            print(response)
+        #except Exception as e:
+        #    print(e)
 
 
         return pred

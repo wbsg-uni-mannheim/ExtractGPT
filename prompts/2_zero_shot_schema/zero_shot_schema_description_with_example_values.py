@@ -6,6 +6,7 @@ from json import JSONDecodeError
 
 import click
 import torch
+import transformers
 from dotenv import load_dotenv
 from langchain import LLMChain, HuggingFacePipeline
 from langchain.callbacks import get_openai_callback
@@ -39,7 +40,7 @@ def main(dataset, model, verbose, with_containment, with_validation_error_handli
     with open('prompts/task_template.json', 'r') as f:
         task_dict = json.load(f)
 
-    task_dict['task_name'] = f"chatgpt_description_with_all_example_values_10_examples_{schema_type}_{'containment_check' if with_containment else ''}_{'validation_error_handling' if with_validation_error_handling else ''}"
+    task_dict['task_name'] = f"chatgpt_description_with_all_example_values_{no_example_values}_examples_{schema_type}_{'containment_check' if with_containment else ''}_{'validation_error_handling' if with_validation_error_handling else ''}"
     task_dict['task_prefix'] = "Split the product {part} by whitespace. " \
                                "Extract the valid attribute values from the product {part} in JSON format. Keep the " \
                                "exact surface form of all attribute values. All valid attributes are provided in the " \
@@ -84,6 +85,30 @@ def main(dataset, model, verbose, with_containment, with_validation_error_handli
             pipe = pipeline(
                 "text-generation", model=model, tokenizer=tokenizer, max_new_tokens=256, temperature=0, use_cache=True)
             llm = HuggingFacePipeline(pipeline=pipe)
+        elif 'Meta-Llama-3' in task_dict['model']:
+
+            tokenizer = AutoTokenizer.from_pretrained(task_dict['model'], cache_dir="/ceph/alebrink/cache")
+            model = AutoModelForCausalLM.from_pretrained(
+                task_dict['model'],
+                cache_dir="/ceph/alebrink/cache",
+                torch_dtype=torch.float16,
+                device_map="auto",
+            )
+            model.tie_weights()
+
+            hf_pipeline = transformers.pipeline(
+                "text-generation",
+                model=model,
+                tokenizer=tokenizer,
+                device_map="auto"
+            )
+
+            terminators = [
+                hf_pipeline.tokenizer.eos_token_id,
+                hf_pipeline.tokenizer.convert_tokens_to_ids("<|eot_id|>")
+            ]
+
+            llm = HuggingFacePipeline(pipeline=hf_pipeline)
         else:
             print('Unknown model!')
 
@@ -150,6 +175,7 @@ def main(dataset, model, verbose, with_containment, with_validation_error_handli
 
     # Persist models
     save_meta_model(task_dict['task_name'], 'default_gpt3_5', task_dict['dataset_name'], models_json)
+    task_dict['meta_json_schema'] = models_json
 
         # Create Chains
     system_message_prompt = SystemMessagePromptTemplate.from_template("You are a world class algorithm for extracting information in structured formats. \n {schema} ")
@@ -212,12 +238,37 @@ def main(dataset, model, verbose, with_containment, with_validation_error_handli
     def select_and_run_llm(category, input_text, part='title', with_validation_error_handling=True, with_containment=True, schema_type='json_schema'):
         pred = None
         try:
-            response = chain.run(input=input_text, schema=convert_to_json_schema(pydantic_models[category], schema_type=schema_type), part=part)
+            if 'Meta-Llama-3' in task_dict['model']:
+                messages = [{"role": "system", "content": prompt.messages[0].format(
+                    schema=convert_to_json_schema(pydantic_models[category], schema_type=schema_type))},
+                            {"role": "human", "content": prompt.messages[1].format(part=part)},
+                            {"role": "human", "content": prompt.messages[2].format(input=input_text)}]
+
+                hf_prompt = hf_pipeline.tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True
+                )
+
+                hf_outputs = hf_pipeline(hf_prompt, max_new_tokens=256,
+                                         eos_token_id=terminators,
+                                         do_sample=True,
+                                         temperature=0.6,
+                                         top_p=0.9
+                                         )
+                response = hf_outputs[0]["generated_text"][len(hf_prompt):]
+            else:
+                response = chain.run(input=input_text, schema=convert_to_json_schema(pydantic_models[category], schema_type=schema_type), part=part)
 
             try:
-                # Convert json string into pydantic model
-                if verbose:
-                    print(json.loads(response))
+                if "```json" in response:
+                    response = response.split("```json")[1].split("```")[0].strip()
+                elif "```" in response:
+                    response = response.split("```")[1].split("```")[0].strip()
+
+                # # Convert json string into pydantic model
+                # if verbose:
+                #     print(json.loads(response))
                 pred = pydantic_models[category](**json.loads(response))
             except ValidationError as valError:
                 if with_validation_error_handling:

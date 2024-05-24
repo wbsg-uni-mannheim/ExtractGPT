@@ -5,6 +5,7 @@ from json import JSONDecodeError
 
 import click
 import torch
+import transformers
 from dotenv import load_dotenv
 from langchain import LLMChain, HuggingFacePipeline
 from langchain.callbacks import get_openai_callback
@@ -70,6 +71,31 @@ def main(dataset, model, verbose):
             pipe = pipeline(
                 "text-generation", model=model, tokenizer=tokenizer, max_new_tokens=256, temperature=0, use_cache=True)
             llm = HuggingFacePipeline(pipeline=pipe)
+        elif 'Meta-Llama-3' in task_dict['model']:
+
+            tokenizer = AutoTokenizer.from_pretrained(task_dict['model'], cache_dir="/ceph/alebrink/cache")
+            model = AutoModelForCausalLM.from_pretrained(
+                task_dict['model'],
+                cache_dir="/ceph/alebrink/cache",
+                torch_dtype=torch.float16,
+                device_map="auto",
+            )
+            model.tie_weights()
+
+            hf_pipeline = transformers.pipeline(
+                "text-generation",
+                model=model,
+                tokenizer=tokenizer,
+                device_map="auto"
+            )
+
+            terminators = [
+                hf_pipeline.tokenizer.eos_token_id,
+                hf_pipeline.tokenizer.convert_tokens_to_ids("<|eot_id|>")
+            ]
+
+            llm = HuggingFacePipeline(pipeline=hf_pipeline)
+
         else:
             print('Unknown model!')
 
@@ -95,8 +121,35 @@ def main(dataset, model, verbose):
         if len(input_text) == 0:
             # No input text provided.
             return pred
-        response = chain.run(input=input_text, attributes=', '.join(task_dict['known_attributes'][category]), part=part)
+        if 'Meta-Llama-3' in task_dict['model']:
+            messages = [{"role": "system", "content": prompt.messages[0].content},
+                        {"role": "human", "content": prompt.messages[1].format(part=part, attributes=', '.join(task_dict['known_attributes'][category]))},
+                        {"role": "human", "content": prompt.messages[2].format(input=input_text)}]
+
+            hf_prompt = hf_pipeline.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True
+            )
+
+            hf_outputs = hf_pipeline(hf_prompt, max_new_tokens=256,
+                                  eos_token_id=terminators,
+                                  do_sample=True,
+                                  temperature=0.6,
+                                  top_p=0.9
+                                  )
+            response = hf_outputs[0]["generated_text"][len(hf_prompt):]
+            print(response)
+
+        else:
+            response = chain.run(input=input_text, attributes=', '.join(task_dict['known_attributes'][category]), part=part)
+
         try:
+            if "```json" in response:
+                response = response.split("```json")[1].split("```")[0].strip()
+            elif "```" in response:
+                response = response.split("```")[1].split("```")[0].strip()
+
             # Convert json string into pydantic model
             pred = pydantic_models[category](**json.loads(response))
             if verbose:

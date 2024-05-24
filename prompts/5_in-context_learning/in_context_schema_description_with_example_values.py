@@ -6,6 +6,7 @@ from json import JSONDecodeError
 
 import click
 import torch
+import transformers
 from dotenv import load_dotenv
 from langchain import LLMChain, HuggingFacePipeline
 from langchain.callbacks import get_openai_callback
@@ -69,6 +70,30 @@ def main(dataset, model, verbose, shots, example_selector, train_percentage, wit
     task_dict['model'] = model
     if 'gpt-3' in task_dict['model'] or 'gpt-4' in task_dict['model']:
         llm = ChatOpenAI(model_name=task_dict['model'], temperature=temperature)
+    elif 'Meta-Llama-3' in task_dict['model']:
+
+        tokenizer = AutoTokenizer.from_pretrained(task_dict['model'], cache_dir="/ceph/alebrink/cache")
+        model = AutoModelForCausalLM.from_pretrained(
+            task_dict['model'],
+            cache_dir="/ceph/alebrink/cache",
+            torch_dtype=torch.float16,
+            device_map="auto",
+        )
+        model.tie_weights()
+
+        hf_pipeline = transformers.pipeline(
+            "text-generation",
+            model=model,
+            tokenizer=tokenizer,
+            device_map="auto"
+        )
+
+        terminators = [
+            hf_pipeline.tokenizer.eos_token_id,
+            hf_pipeline.tokenizer.convert_tokens_to_ids("<|eot_id|>")
+        ]
+
+        llm = HuggingFacePipeline(pipeline=hf_pipeline)
     else:
         tokenizer = AutoTokenizer.from_pretrained(task_dict['model'], use_fast=False)
         model = AutoModelForCausalLM.from_pretrained(task_dict['model'], torch_dtype=torch.float16,
@@ -106,6 +131,7 @@ def main(dataset, model, verbose, shots, example_selector, train_percentage, wit
         )
         #chain_meta_model = create_structured_output_chain(ProductCategory, llm, prompt_meta_model, verbose=True)
         known_attribute_values_per_category = json.dumps(known_attribute_values[category])
+
         response = chain.run({'schema': convert_to_json_schema(ProductCategory, False), 'category': category,
                               'attributes': ', '.join(task_dict['known_attributes'][category]),
                               'known_attribute_values': known_attribute_values_per_category})
@@ -220,7 +246,38 @@ def main(dataset, model, verbose, shots, example_selector, train_percentage, wit
                            with_containment=True, schema_type='json_schema'):
         pred = None
         try:
-            response = chain.run(input=input_text,
+
+            if 'Meta-Llama-3' in task_dict['model']:
+                messages = [{"role": "system", "content": prompt.messages[0].format(schema=convert_to_json_schema(pydantic_models[category], schema_type=schema_type))},
+                            {"role": "human", "content": prompt.messages[1].format(part=part)}]
+
+                for few_shot_message in few_shot_prompt.format_prompt(input=input_text,
+                                                                      category=category).to_messages():
+                    hf_few_shot_message = {"role": few_shot_message.type, "content": few_shot_message.content}
+                    messages.append(hf_few_shot_message)
+
+                # Add the human message prompt
+                messages.append({"role": "human", "content": prompt.messages[3].format(part=part)})
+                messages.append({"role": "human", "content": prompt.messages[4].format(input=input_text)})
+
+                hf_prompt = hf_pipeline.tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True
+                )
+
+                hf_outputs = hf_pipeline(hf_prompt, max_new_tokens=256,
+                                         eos_token_id=terminators,
+                                         do_sample=True,
+                                         temperature=0.6,
+                                         top_p=0.9
+                                         )
+                response = hf_outputs[0]["generated_text"][len(hf_prompt):]
+                print(response)
+
+            else:
+
+                response = chain.run(input=input_text,
                                  schema=convert_to_json_schema(pydantic_models[category], schema_type=schema_type),
                                  part=part, category=category)
 
