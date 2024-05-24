@@ -269,7 +269,7 @@ def main(dataset, model, verbose, shots, example_selector, train_percentage, wit
                 hf_outputs = hf_pipeline(hf_prompt, max_new_tokens=256,
                                          eos_token_id=terminators,
                                          do_sample=True,
-                                         temperature=0.6,
+                                         temperature=0.0,
                                          top_p=0.9
                                          )
                 response = hf_outputs[0]["generated_text"][len(hf_prompt):]
